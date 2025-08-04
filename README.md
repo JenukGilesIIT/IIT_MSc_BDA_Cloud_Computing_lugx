@@ -100,6 +100,7 @@ lugx-gaming-cloud/
 
 ## Author
 
-Student: [Your Name]
+Student: Jenuk Giles
 Module: CMM707 Cloud Computing
 Institution: Informatics Institute of Technology
+
