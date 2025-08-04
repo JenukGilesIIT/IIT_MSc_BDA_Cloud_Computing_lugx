@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lugx-gaming-ingress
+  namespace: lugx-gaming
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: lugx-gaming.local  # For local testing
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lugx-frontend-service
+                port:
+                  number: 80
+    - http:  # Default rule for IP access
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lugx-frontend-service
+                port:
+                  number: 80

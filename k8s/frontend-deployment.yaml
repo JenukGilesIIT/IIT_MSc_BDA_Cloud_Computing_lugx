@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lugx-frontend-deployment
+  namespace: lugx-gaming
+  labels:
+    app: lugx-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lugx-frontend
+  template:
+    metadata:
+      labels:
+        app: lugx-frontend
+    spec:
+      containers:
+        - name: lugx-frontend
+          image: jenuk/lugx-frontend:v1.0
+          ports:
+            - containerPort: 8080
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lugx-frontend-service
+  namespace: lugx-gaming
+  labels:
+    app: lugx-frontend
+spec:
+  selector:
+    app: lugx-frontend
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP

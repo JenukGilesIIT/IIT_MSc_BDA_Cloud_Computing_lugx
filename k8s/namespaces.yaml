@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lugx-production
+  labels:
+    name: lugx-production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lugx-staging
+  labels:
+    name: lugx-staging

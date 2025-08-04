@@ -1,0 +1,36 @@
+{
+  "name": "lugx-analytics-service",
+  "version": "1.0.0",
+  "description": "Analytics and reporting microservice for LUGX Gaming Platform",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "analytics",
+    "microservice",
+    "gaming",
+    "reporting",
+    "statistics"
+  ],
+  "author": "LUGX Gaming Team",
+  "license": "MIT",
+  "dependencies": {
+    "@clickhouse/client": "^0.2.10",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

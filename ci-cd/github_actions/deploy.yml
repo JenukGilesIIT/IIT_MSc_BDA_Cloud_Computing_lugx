@@ -1,0 +1,247 @@
+name: Deploy LUGX Gaming Platform
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: lugx-gaming
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Run Tests
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        cd services/game-service && npm ci
+        cd ../order-service && npm ci
+        cd ../analytics-service && npm ci
+        
+    - name: Run unit tests
+      run: |
+        cd services/game-service && npm test
+        cd ../order-service && npm test
+        cd ../analytics-service && npm test
+        
+    - name: Lint code
+      run: |
+        cd services/game-service && npm run lint || true
+        cd ../order-service && npm run lint || true
+        cd ../analytics-service && npm run lint || true
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    name: Build Docker Images
+    
+    strategy:
+      matrix:
+        service: [frontend, game-service, order-service, analytics-service]
+        
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: ${{ matrix.service == 'frontend' && './frontend' || format('./services/{0}', matrix.service) }}
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Deploy to Staging
+    if: github.ref == 'refs/heads/develop'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Configure kubectl
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+        
+    - name: Deploy to staging namespace
+      run: |
+        kubectl apply -f k8s/namespace-staging.yaml
+        kubectl apply -f k8s/ -n lugx-staging
+        kubectl set image deployment/frontend frontend=${{ env.REGISTRY }}/${{ github.repository }}/frontend:develop -n lugx-staging
+        kubectl set image deployment/game-service game-service=${{ env.REGISTRY }}/${{ github.repository }}/game-service:develop -n lugx-staging
+        kubectl set image deployment/order-service order-service=${{ env.REGISTRY }}/${{ github.repository }}/order-service:develop -n lugx-staging
+        kubectl set image deployment/analytics-service analytics-service=${{ env.REGISTRY }}/${{ github.repository }}/analytics-service:develop -n lugx-staging
+        
+    - name: Wait for deployment
+      run: |
+        kubectl rollout status deployment/frontend -n lugx-staging --timeout=300s
+        kubectl rollout status deployment/game-service -n lugx-staging --timeout=300s
+        kubectl rollout status deployment/order-service -n lugx-staging --timeout=300s
+        kubectl rollout status deployment/analytics-service -n lugx-staging --timeout=300s
+        
+    - name: Run integration tests on staging
+      run: |
+        chmod +x ci-cd/test_scripts/run_tests.sh
+        FRONTEND_URL="https://staging.lugx-gaming.com" ./ci-cd/test_scripts/run_tests.sh
+
+  deploy-production:
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    name: Blue-Green Production Deployment
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Configure kubectl
+      run: |
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBE_CONFIG_PROD }}" | base64 -d > ~/.kube/config
+        
+    - name: Determine current environment
+      id: current-env
+      run: |
+        CURRENT=$(kubectl get service lugx-frontend -o jsonpath='{.spec.selector.environment}' -n lugx-production || echo "blue")
+        if [ "$CURRENT" = "blue" ]; then
+          echo "current=blue" >> $GITHUB_OUTPUT
+          echo "target=green" >> $GITHUB_OUTPUT
+        else
+          echo "current=green" >> $GITHUB_OUTPUT
+          echo "target=blue" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Deploy to target environment
+      run: |
+        # Deploy to target environment (blue or green)
+        TARGET_ENV=${{ steps.current-env.outputs.target }}
+        
+        # Update deployment files with target environment
+        sed -i "s/environment: .*/environment: $TARGET_ENV/" k8s/deployment-*.yaml
+        
+        kubectl apply -f k8s/ -n lugx-production
+        kubectl set image deployment/frontend-$TARGET_ENV frontend=${{ env.REGISTRY }}/${{ github.repository }}/frontend:main -n lugx-production
+        kubectl set image deployment/game-service-$TARGET_ENV game-service=${{ env.REGISTRY }}/${{ github.repository }}/game-service:main -n lugx-production
+        kubectl set image deployment/order-service-$TARGET_ENV order-service=${{ env.REGISTRY }}/${{ github.repository }}/order-service:main -n lugx-production
+        kubectl set image deployment/analytics-service-$TARGET_ENV analytics-service=${{ env.REGISTRY }}/${{ github.repository }}/analytics-service:main -n lugx-production
+        
+    - name: Wait for target deployment
+      run: |
+        TARGET_ENV=${{ steps.current-env.outputs.target }}
+        kubectl rollout status deployment/frontend-$TARGET_ENV -n lugx-production --timeout=300s
+        kubectl rollout status deployment/game-service-$TARGET_ENV -n lugx-production --timeout=300s
+        kubectl rollout status deployment/order-service-$TARGET_ENV -n lugx-production --timeout=300s
+        kubectl rollout status deployment/analytics-service-$TARGET_ENV -n lugx-production --timeout=300s
+        
+    - name: Run health checks on target environment
+      run: |
+        TARGET_ENV=${{ steps.current-env.outputs.target }}
+        # Get the internal service URLs for the target environment
+        kubectl port-forward service/frontend-$TARGET_ENV 8080:80 -n lugx-production &
+        sleep 10
+        
+        # Run basic health checks
+        curl -f http://localhost:8080 || exit 1
+        curl -f http://localhost:8080/health || exit 1
+        
+    - name: Switch traffic to target environment
+      run: |
+        TARGET_ENV=${{ steps.current-env.outputs.target }}
+        
+        # Update service selectors to point to target environment
+        kubectl patch service lugx-frontend -p '{"spec":{"selector":{"environment":"'$TARGET_ENV'"}}}' -n lugx-production
+        kubectl patch service lugx-game-service -p '{"spec":{"selector":{"environment":"'$TARGET_ENV'"}}}' -n lugx-production
+        kubectl patch service lugx-order-service -p '{"spec":{"selector":{"environment":"'$TARGET_ENV'"}}}' -n lugx-production
+        kubectl patch service lugx-analytics-service -p '{"spec":{"selector":{"environment":"'$TARGET_ENV'"}}}' -n lugx-production
+        
+    - name: Run post-deployment tests
+      run: |
+        # Wait a bit for DNS/load balancer updates
+        sleep 30
+        
+        # Run comprehensive integration tests
+        chmod +x ci-cd/test_scripts/run_tests.sh
+        FRONTEND_URL="https://lugx-gaming.com" ./ci-cd/test_scripts/run_tests.sh
+        
+    - name: Clean up old environment
+      run: |
+        CURRENT_ENV=${{ steps.current-env.outputs.current }}
+        
+        # Scale down old environment
+        kubectl scale deployment frontend-$CURRENT_ENV --replicas=0 -n lugx-production
+        kubectl scale deployment game-service-$CURRENT_ENV --replicas=0 -n lugx-production
+        kubectl scale deployment order-service-$CURRENT_ENV --replicas=0 -n lugx-production
+        kubectl scale deployment analytics-service-$CURRENT_ENV --replicas=0 -n lugx-production
+        
+    - name: Notify deployment success
+      run: |
+        echo "🎉 Blue-Green deployment completed successfully!"
+        echo "Active environment: ${{ steps.current-env.outputs.target }}"
+        echo "Previous environment: ${{ steps.current-env.outputs.current }} (scaled down)"
+
+  scheduled-tests:
+    runs-on: ubuntu-latest
+    name: Scheduled Health Checks
+    if: github.event_name == 'schedule'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Run periodic health checks
+      run: |
+        chmod +x ci-cd/test_scripts/run_tests.sh
+        FRONTEND_URL="https://lugx-gaming.com" ./ci-cd/test_scripts/run_tests.sh
+        
+    - name: Notify if tests fail
+      if: failure()
+      run: |
+        echo "❌ Scheduled health checks failed!"
+        # Add notification logic here (Slack, email, etc.)
+
+# Schedule for periodic tests
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours

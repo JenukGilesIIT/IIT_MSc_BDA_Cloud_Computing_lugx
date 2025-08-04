@@ -1,0 +1,68 @@
+# Load Testing Configuration for LUGX Gaming Platform
+
+config:
+  target: 'http://localhost'
+  phases:
+    - duration: 60
+      arrivalRate: 10
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 50
+      name: "Ramp up load"
+    - duration: 300
+      arrivalRate: 100
+      name: "Sustained load"
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+
+scenarios:
+  - name: "Frontend browsing"
+    weight: 40
+    flow:
+      - get:
+          url: "/"
+      - think: 2
+      - get:
+          url: "/shop.html"
+      - think: 3
+      - get:
+          url: "/product-details.html"
+      - think: 5
+
+  - name: "Game API testing"
+    weight: 30
+    flow:
+      - get:
+          url: ":3000/api/games"
+      - think: 1
+      - get:
+          url: ":3000/api/games/1"
+      - think: 2
+
+  - name: "Order processing"
+    weight: 20
+    flow:
+      - post:
+          url: ":3001/api/orders"
+          json:
+            customer_id: "CUST{{ $randomString() }}"
+            game_id: "{{ $randomInt(1, 10) }}"
+            quantity: "{{ $randomInt(1, 3) }}"
+      - think: 1
+
+  - name: "Analytics events"
+    weight: 10
+    flow:
+      - post:
+          url: ":3002/api/analytics/events"
+          json:
+            events:
+              - event_type: "page_view"
+                session_id: "load_test_{{ $randomString() }}"
+                page_url: "/shop"
+                page_title: "Game Shop"
+                page_category: "shop"
+      - think: 1
+      - get:
+          url: ":3002/api/analytics/dashboard"

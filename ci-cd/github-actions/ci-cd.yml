@@ -1,0 +1,88 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: lugx-gaming
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: |
+        cd frontend
+        npm install
+    
+    - name: Run tests
+      run: |
+        cd frontend
+        npm test
+    
+    - name: Lint code
+      run: |
+        cd frontend
+        npm run lint
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+    
+    - name: Build, tag, and push frontend image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        cd frontend
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:frontend-$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:frontend-$IMAGE_TAG
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:frontend-$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:frontend-latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:frontend-latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Deploy to EKS
+      run: |
+        aws eks update-kubeconfig --region $AWS_REGION --name lugx-gaming-cluster
+        kubectl set image deployment/frontend-deployment frontend=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:frontend-${{ github.sha }} -n lugx-gaming
+        kubectl rollout status deployment/frontend-deployment -n lugx-gaming
