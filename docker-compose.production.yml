@@ -1,0 +1,233 @@
+# LUGX Gaming Platform - Complete Production Docker Compose
+# This file deploys the entire application stack with all microservices and databases
+
+version: '3.8'
+
+networks:
+  lugx-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local
+  clickhouse-data:
+    driver: local
+
+services:
+  # PostgreSQL Database - Transactional Data
+  postgres:
+    image: postgres:15-alpine
+    container_name: lugx-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lugx_gaming
+      POSTGRES_USER: lugx_admin
+      POSTGRES_PASSWORD: lugx_secure_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/postgres/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - lugx-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lugx_admin -d lugx_gaming"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ClickHouse Database - Analytics Data
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: lugx-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: analytics_user
+      CLICKHOUSE_PASSWORD: analytics_password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./database/clickhouse/init:/docker-entrypoint-initdb.d
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    networks:
+      - lugx-network
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Game Service - Microservice for game management
+  game-service:
+    build:
+      context: ./services/game-service
+      dockerfile: Dockerfile
+    container_name: lugx-game-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: lugx_gaming
+      DB_USER: lugx_admin
+      DB_PASSWORD: lugx_secure_password
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lugx-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Order Service - Microservice for order management
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+    container_name: lugx-order-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: lugx_gaming
+      DB_USER: lugx_admin
+      DB_PASSWORD: lugx_secure_password
+      GAME_SERVICE_URL: http://game-service:3000
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      game-service:
+        condition: service_healthy
+    networks:
+      - lugx-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Analytics Service - Microservice for analytics and reporting
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: lugx-analytics-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_DATABASE: analytics
+      CLICKHOUSE_USERNAME: analytics_user
+      CLICKHOUSE_PASSWORD: analytics_password
+    ports:
+      - "3002:3002"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - lugx-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend - Static website with nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lugx-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - game-service
+      - order-service
+      - analytics-service
+    networks:
+      - lugx-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Nginx Reverse Proxy (Optional - for production routing)
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: lugx-nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/lugx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - game-service
+      - order-service
+      - analytics-service
+    networks:
+      - lugx-network
+    profiles:
+      - production
+
+  # pgAdmin - Database Administration Tool
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: lugx-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@lugx.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_LISTEN_PORT: 5050
+    ports:
+      - "5050:5050"
+    depends_on:
+      - postgres
+    networks:
+      - lugx-network
+    profiles:
+      - development
+
+  # Redis Cache (Optional - for session storage and caching)
+  redis:
+    image: redis:7-alpine
+    container_name: lugx-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_password
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis/data:/data
+    networks:
+      - lugx-network
+    profiles:
+      - production
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
