@@ -150,7 +150,7 @@ spec:
     spec:
       containers:
       - name: game-service
-        image: lugx/game-service:latest
+        image: jenuk/lugx-game-service:latest
         ports:
         - containerPort: 3000
         env:
@@ -208,7 +208,7 @@ spec:
     spec:
       containers:
       - name: order-service
-        image: lugx/order-service:latest
+        image: jenuk/lugx-order-service:latest
         ports:
         - containerPort: 3001
         env:
@@ -268,7 +268,7 @@ spec:
     spec:
       containers:
       - name: analytics-service
-        image: lugx/analytics-service:latest
+        image: jenuk/lugx-analytics-service:latest
         ports:
         - containerPort: 3002
         env:
@@ -326,7 +326,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: lugx/frontend:latest
+        image: jenuk/lugx-frontend:latest
         ports:
         - containerPort: 80
         livenessProbe:
@@ -396,3 +396,4 @@ spec:
             name: analytics-service
             port:
               number: 3002
+
