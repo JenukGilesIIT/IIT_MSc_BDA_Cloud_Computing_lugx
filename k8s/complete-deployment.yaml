@@ -328,7 +328,8 @@ spec:
       - name: frontend
         image: jenuk/lugx-frontend:latest
         ports:
-        - containerPort: 80
+         # Change back to 80 if it doesn't work
+        - containerPort: 8080
         livenessProbe:
           httpGet:
             path: /
@@ -351,8 +352,9 @@ spec:
   selector:
     app: frontend
   ports:
-  - port: 80
-    targetPort: 80
+  # Change back to 80 if it doesn't work
+  - port: 8080 
+    targetPort: 8080
   type: LoadBalancer
 ---
 # Ingress Controller
@@ -374,7 +376,8 @@ spec:
           service:
             name: frontend
             port:
-              number: 80
+             # Change back to 80 if it doesn't work
+              number: 8080
       - path: /api/games
         pathType: Prefix
         backend:
@@ -396,4 +399,5 @@ spec:
             name: analytics-service
             port:
               number: 3002
+
 
