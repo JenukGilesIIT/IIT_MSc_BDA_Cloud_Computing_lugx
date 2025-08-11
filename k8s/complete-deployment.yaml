@@ -328,17 +328,17 @@ spec:
       - name: frontend
         image: jenuk/lugx-frontend:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 80
         livenessProbe:
           httpGet:
             path: /
-            port: 8080
+            port: 80
           initialDelaySeconds: 10
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /
-            port: 8080
+            port: 80
           initialDelaySeconds: 5
           periodSeconds: 5
 ---
@@ -351,8 +351,8 @@ spec:
   selector:
     app: frontend
   ports:
-  - port: 8080
-    targetPort: 8080
+  - port: 80
+    targetPort: 80
   type: LoadBalancer
 ---
 # Ingress Controller
@@ -374,7 +374,7 @@ spec:
           service:
             name: frontend
             port:
-              number: 8080
+              number: 80
       - path: /api/games
         pathType: Prefix
         backend:
@@ -396,6 +396,7 @@ spec:
             name: analytics-service
             port:
               number: 3002
+
 
 
 
